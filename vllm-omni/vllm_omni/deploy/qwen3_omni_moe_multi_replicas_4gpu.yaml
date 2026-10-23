@@ -1,0 +1,120 @@
+# Qwen3-Omni-MoE multi-replica deploy for 4×H20-96G.
+#
+# Design philosophy (UPDATED 2026-05-12):
+#   This file is now derived from the UPSTREAM verified 3GPU baseline
+#   (qwen3_omni_moe_multi_replicas.yaml, "verified on 3x H20-96G"), with
+#   the ONLY topology change being:
+#       stage 1/2:  num_replicas 2 -> 3,  devices "1,2" -> "1,2,3".
+#   All other fields are kept identical to upstream so we are testing one
+#   variable at a time.
+#
+# WHY THIS DIFFERS FROM THE PREVIOUS REVISION:
+#   The previous revision was copied from tests/helpers/stage_config.py
+#   ::_CI_OVERLAYS["qwen3_omni_moe_multi_replicas_4gpu"], which is a
+#   CI smoke overlay (load_format=dummy, max_tokens=150) where
+#   max_num_seqs is intentionally clamped to 6/2/2 to keep the IO loop
+#   short. That batch-size clamp is NOT a recommended production setting:
+#   profiling on 2026-05-11 (run track_a_multi_replica_20260511_203530)
+#   showed thinker stage_0 stalled at sm_p90=71% with c=8..64 producing
+#   a flat qps≈0.55 — the thinker batch was being capped at 6 in-flight
+#   sequences, which let 3 talker replicas idle.
+#
+# Topology (4 GPU):
+#   GPU 0          : thinker (stage 0)            — single instance
+#   GPU 1, 2, 3    : talker (stage 1) × 3 replicas + c2w (stage 2) × 3 replicas
+#                    (talker_rep_i and c2w_rep_i co-locate on GPU i+1, i ∈ {0,1,2})
+#
+# Stage 0 (thinker) MUST set enable_prefix_caching=false: in async_chunk
+# mode the thinker's prefill hidden_states are consumed by the pooler
+# to feed thinker2talker_async_chunk; if prefix caching is left at its
+# vllm default (true), those hidden_states are skipped, every chunk
+# payload becomes None, and the downstream talker/code2wav stages hang
+# waiting for SHM segments that are never written.
+async_chunk: true
+
+connectors:
+  connector_of_shared_memory:
+    name: SharedMemoryConnector
+    extra:
+      codec_chunk_frames: 25
+      codec_left_context_frames: 25
+
+stages:
+  - stage_id: 0
+    gpu_memory_utilization: 0.9
+    devices: "0"
+    enable_prefix_caching: false
+    default_sampling_params:
+      temperature: 0.4
+      top_p: 0.9
+      top_k: 1
+      max_tokens: 2048
+      seed: 42
+      repetition_penalty: 1.05
+
+  - stage_id: 1
+    gpu_memory_utilization: 0.6
+    devices: "1,2,3"
+    num_replicas: 3
+    input_connectors:
+      from_stage_0: connector_of_shared_memory
+    default_sampling_params:
+      temperature: 0.9
+      top_k: 50
+      max_tokens: 4096
+      seed: 42
+      repetition_penalty: 1.05
+
+  - stage_id: 2
+    gpu_memory_utilization: 0.1
+    max_num_seqs: 1
+    enforce_eager: true
+    async_scheduling: false
+    max_num_batched_tokens: 51200
+    devices: "1,2,3"
+    num_replicas: 3
+    input_connectors:
+      from_stage_1: connector_of_shared_memory
+    default_sampling_params:
+      temperature: 0.0
+      top_p: 1.0
+      top_k: -1
+      max_tokens: 65536
+      seed: 42
+      repetition_penalty: 1.1
+
+platforms:
+  npu:
+    stages:
+      - stage_id: 0
+        gpu_memory_utilization: 0.6
+        tensor_parallel_size: 2
+        devices: "0,1"
+      - stage_id: 1
+        gpu_memory_utilization: 0.6
+        enforce_eager: true
+        devices: "2"
+      - stage_id: 2
+        gpu_memory_utilization: 0.3
+        devices: "2"
+
+  rocm:
+    stages:
+      - stage_id: 0
+        enforce_eager: true
+
+  xpu:
+    stages:
+      - stage_id: 0
+        tensor_parallel_size: 4
+        enforce_eager: true
+        max_cudagraph_capture_size: 0
+        devices: "0,1,2,3"
+      - stage_id: 1
+        enforce_eager: true
+        max_cudagraph_capture_size: 0
+        devices: "4"
+      - stage_id: 2
+        gpu_memory_utilization: 0.3
+        max_cudagraph_capture_size: 0
+        devices: "4"

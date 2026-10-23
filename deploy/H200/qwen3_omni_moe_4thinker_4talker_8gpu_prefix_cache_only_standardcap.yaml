@@ -1,0 +1,59 @@
+# Qwen3-Omni-MoE 8-GPU deploy for standard-capacity eviction validation.
+#
+# Delta from qwen3_omni_moe_4thinker_4talker_8gpu_standardcap.yaml:
+#   * stage 0 enables prefix caching so LRU/custom eviction can select cached
+#     KV blocks under the same per-thinker 10744-block cap.
+async_chunk: true
+
+connectors:
+  connector_of_shared_memory:
+    name: SharedMemoryConnector
+    extra:
+      codec_chunk_frames: 25
+      codec_left_context_frames: 25
+
+stages:
+  - stage_id: 0
+    gpu_memory_utilization: 0.9
+    num_gpu_blocks_override: 10744
+    devices: "0,1,2,3"
+    num_replicas: 4
+    enable_prefix_caching: true
+    default_sampling_params:
+      temperature: 0.4
+      top_p: 0.9
+      top_k: 1
+      max_tokens: 2048
+      seed: 42
+      repetition_penalty: 1.05
+
+  - stage_id: 1
+    gpu_memory_utilization: 0.6
+    devices: "4,5,6,7"
+    num_replicas: 4
+    input_connectors:
+      from_stage_0: connector_of_shared_memory
+    default_sampling_params:
+      temperature: 0.9
+      top_k: 50
+      max_tokens: 4096
+      seed: 42
+      repetition_penalty: 1.05
+
+  - stage_id: 2
+    gpu_memory_utilization: 0.1
+    max_num_seqs: 1
+    enforce_eager: true
+    async_scheduling: false
+    max_num_batched_tokens: 51200
+    devices: "4,5,6,7"
+    num_replicas: 4
+    input_connectors:
+      from_stage_1: connector_of_shared_memory
+    default_sampling_params:
+      temperature: 0.0
+      top_p: 1.0
+      top_k: -1
+      max_tokens: 65536
+      seed: 42
+      repetition_penalty: 1.1

@@ -1,0 +1,8 @@
+# CPU checks and diagnostic clients; no torch, vLLM, model or GPU installation.
+aiohttp>=3.9,<4
+numpy>=1.26,<3
+psutil>=5.9,<8
+PyYAML>=6,<7
+requests>=2.31,<3
+soundfile>=0.12,<1
+

@@ -1,0 +1,64 @@
+# Qwen3-Omni-MoE diagnostic deploy for 3 GPUs.
+#
+# Topology:
+#   GPU 0: thinker (stage 0) replica 0
+#   GPU 1: thinker (stage 0) replica 1
+#   GPU 2: talker (stage 1) x 1 + code2wav (stage 2) x 1
+#
+# Use this only as a bottleneck probe. If it improves TTFP/qps versus the
+# regular 3GPU full-audio deploy, stage 0/video thinker is likely the limiter.
+# If it worsens RTF/pre-interrupt audio under longer answers, downstream audio
+# generation is likely the limiter.
+async_chunk: true
+
+connectors:
+  connector_of_shared_memory:
+    name: SharedMemoryConnector
+    extra:
+      codec_chunk_frames: 25
+      codec_left_context_frames: 25
+
+stages:
+  - stage_id: 0
+    gpu_memory_utilization: 0.9
+    devices: "0,1"
+    num_replicas: 2
+    enable_prefix_caching: false
+    default_sampling_params:
+      temperature: 0.4
+      top_p: 0.9
+      top_k: 1
+      max_tokens: 2048
+      seed: 42
+      repetition_penalty: 1.05
+
+  - stage_id: 1
+    gpu_memory_utilization: 0.6
+    devices: "2"
+    num_replicas: 1
+    input_connectors:
+      from_stage_0: connector_of_shared_memory
+    default_sampling_params:
+      temperature: 0.9
+      top_k: 50
+      max_tokens: 4096
+      seed: 42
+      repetition_penalty: 1.05
+
+  - stage_id: 2
+    gpu_memory_utilization: 0.1
+    max_num_seqs: 1
+    enforce_eager: true
+    async_scheduling: false
+    max_num_batched_tokens: 51200
+    devices: "2"
+    num_replicas: 1
+    input_connectors:
+      from_stage_1: connector_of_shared_memory
+    default_sampling_params:
+      temperature: 0.0
+      top_p: 1.0
+      top_k: -1
+      max_tokens: 65536
+      seed: 42
+      repetition_penalty: 1.1

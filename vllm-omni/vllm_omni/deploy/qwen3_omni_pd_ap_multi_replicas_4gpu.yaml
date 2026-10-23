@@ -1,0 +1,112 @@
+# Qwen3-Omni-MoE PD + async + multi-replica deploy for 4× H20-96G
+#
+# Topology:
+#   GPU 0    : thinker stage 0 (prefill, kv_producer)
+#   GPU 1    : thinker stage 1 (decode,  kv_consumer)
+#   GPU 2,3  : stage 2 talker × 2 replicas + stage 3 code2wav × 2 replicas
+#
+# This is the (A) experiment in Track A: PD+async+multi-replica stacked.
+# Built per docs/configuration/pd_disaggregation.md (work/main-pr2396 has no
+# pd_disaggregation: shorthand recognizer — must list stages explicitly).
+#
+# Notes vs qwen3_omni_pd_ap.yaml:
+#   - 4 explicit stages instead of pd_disaggregation: shorthand
+#   - stages 2/3 use num_replicas=2 across devices "2,3" (PR#2396 multi-replica)
+#   - keep enable_prefix_caching: false on stage 0 AND stage 1 (PD thinker pair)
+#     because async_chunk needs prefill hidden_states; prefix caching skips them
+#   - decode_stage_async_chunk semantics already native on main (async_chunk: true
+#     applies to all non-prefill stages of qwen3_omni pipeline)
+
+async_chunk: true
+
+connectors:
+  connector_of_shared_memory:
+    name: SharedMemoryConnector
+    extra:
+      codec_chunk_frames: 25
+      codec_left_context_frames: 25
+
+stages:
+  # Stage 0 — thinker prefill (kv producer)
+  - stage_id: 0
+    is_prefill_only: true
+    devices: "0"
+    gpu_memory_utilization: 0.85
+    max_num_seqs: 16
+    max_num_batched_tokens: 32768
+    enable_prefix_caching: false
+    enforce_eager: true
+    engine_extras:
+      kv_transfer_config:
+        kv_connector: MooncakeConnector
+        kv_role: kv_producer
+        kv_rank: 0
+        kv_parallel_size: 2
+        kv_connector_extra_config:
+          mooncake_bootstrap_port: 25201
+    default_sampling_params:
+      temperature: 0.4
+      top_p: 0.9
+      top_k: 1
+      max_tokens: 2048
+      seed: 42
+      repetition_penalty: 1.05
+
+  # Stage 1 — thinker decode (kv consumer)
+  - stage_id: 1
+    is_decode_only: true
+    devices: "1"
+    gpu_memory_utilization: 0.85
+    max_num_seqs: 64
+    max_num_batched_tokens: 32768
+    enable_prefix_caching: false
+    enforce_eager: true
+    engine_extras:
+      kv_transfer_config:
+        kv_connector: MooncakeConnector
+        kv_role: kv_consumer
+        kv_rank: 1
+        kv_parallel_size: 2
+        kv_connector_extra_config:
+          mooncake_bootstrap_port: 25202
+    default_sampling_params:
+      temperature: 0.4
+      top_p: 0.9
+      top_k: 1
+      max_tokens: 2048
+      seed: 42
+      repetition_penalty: 1.05
+
+  # Stage 2 — talker × 2 replicas on GPUs 2 and 3
+  - stage_id: 2
+    devices: "2,3"
+    num_replicas: 2
+    gpu_memory_utilization: 0.6
+    max_num_seqs: 2
+    input_connectors:
+      from_stage_1: connector_of_shared_memory
+    default_sampling_params:
+      temperature: 0.9
+      top_k: 50
+      max_tokens: 4096
+      seed: 42
+      repetition_penalty: 1.05
+
+  # Stage 3 — code2wav × 2 replicas, co-located with talker
+  - stage_id: 3
+    devices: "2,3"
+    num_replicas: 2
+    gpu_memory_utilization: 0.1
+    max_num_seqs: 2
+    max_num_batched_tokens: 65536
+    enforce_eager: true
+    async_scheduling: false
+    input_connectors:
+      from_stage_2: connector_of_shared_memory
+    default_sampling_params:
+      temperature: 0.0
+      top_p: 1.0
+      top_k: -1
+      max_tokens: 65536
+      seed: 42
+      repetition_penalty: 1.1

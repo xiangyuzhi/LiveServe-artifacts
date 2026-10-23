@@ -1,0 +1,49 @@
+# Ming-flash-omni-2.0 4GPU TP4 deploy.
+#
+# Topology:
+#   logical GPU 0-3: thinker TP=4 (stage 0)
+#   logical GPU 3:   talker colocated with the last thinker shard (stage 1)
+# Physical GPUs are selected by CUDA_VISIBLE_DEVICES.
+#
+# This is intentionally close to the branch's bundled
+# vllm_omni/deploy/ming_flash_omni.yaml. The local H200/L20X devices expose
+# 143 GiB HBM each, so this keeps extra headroom on logical GPU 3 for the
+# colocated talker while allowing a slightly larger thinker cache than the
+# 80 GiB preset.
+pipeline: ming_flash_omni
+async_chunk: false
+
+trust_remote_code: true
+distributed_executor_backend: mp
+enable_prefix_caching: false
+
+stages:
+  - stage_id: 0
+    max_num_seqs: 1
+    gpu_memory_utilization: 0.78
+    enforce_eager: false
+    tensor_parallel_size: 4
+    max_num_batched_tokens: 32768
+    devices: "0,1,2,3"
+    compilation_config:
+      pass_config:
+        fuse_allreduce_rms: false
+    default_sampling_params:
+      temperature: 0.4
+      top_p: 0.9
+      max_tokens: 2048
+      repetition_penalty: 1.05
+      detokenize: true
+      ignore_eos: false
+
+  - stage_id: 1
+    max_num_seqs: 1
+    gpu_memory_utilization: 0.18
+    enforce_eager: true
+    max_num_batched_tokens: 1000000
+    devices: "3"
+    default_sampling_params:
+      temperature: 0.0
+      max_tokens: 1
+
+platforms: {}

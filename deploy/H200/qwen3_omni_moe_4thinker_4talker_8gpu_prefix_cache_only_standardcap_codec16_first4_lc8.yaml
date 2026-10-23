@@ -1,0 +1,61 @@
+# Qwen3-Omni-MoE 8-GPU deploy for first-audio latency probing.
+#
+# Delta from codec16_lc8:
+#   * keep the proven 16-frame / 8-left-context cadence after the first chunk.
+#   * lower only the first code2wav chunk threshold to 4 frames as an aggressive
+#     probe of the stage2 submit->codec emit bottleneck.
+async_chunk: true
+
+connectors:
+  connector_of_shared_memory:
+    name: SharedMemoryConnector
+    extra:
+      codec_first_chunk_frames: 4
+      codec_chunk_frames: 16
+      codec_left_context_frames: 8
+
+stages:
+  - stage_id: 0
+    gpu_memory_utilization: 0.9
+    num_gpu_blocks_override: 10744
+    devices: "0,1,2,3"
+    num_replicas: 4
+    enable_prefix_caching: true
+    default_sampling_params:
+      temperature: 0.4
+      top_p: 0.9
+      top_k: 1
+      max_tokens: 2048
+      seed: 42
+      repetition_penalty: 1.05
+
+  - stage_id: 1
+    gpu_memory_utilization: 0.6
+    devices: "4,5,6,7"
+    num_replicas: 4
+    input_connectors:
+      from_stage_0: connector_of_shared_memory
+    default_sampling_params:
+      temperature: 0.9
+      top_k: 50
+      max_tokens: 4096
+      seed: 42
+      repetition_penalty: 1.05
+
+  - stage_id: 2
+    gpu_memory_utilization: 0.1
+    max_num_seqs: 1
+    enforce_eager: true
+    async_scheduling: false
+    max_num_batched_tokens: 51200
+    devices: "4,5,6,7"
+    num_replicas: 4
+    input_connectors:
+      from_stage_1: connector_of_shared_memory
+    default_sampling_params:
+      temperature: 0.0
+      top_p: 1.0
+      top_k: -1
+      max_tokens: 65536
+      seed: 42
+      repetition_penalty: 1.1

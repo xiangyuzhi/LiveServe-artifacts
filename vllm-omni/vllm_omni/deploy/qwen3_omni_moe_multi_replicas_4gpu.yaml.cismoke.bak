@@ -1,0 +1,112 @@
+# Qwen3-Omni-MoE multi-replica deploy for 4×H20-96G — STRICTLY ALIGNED TO PR.
+#
+# Source of truth: tests/helpers/stage_config.py::_CI_OVERLAYS
+#                  ["qwen3_omni_moe_multi_replicas_4gpu"]
+# Reference:       commit ce675772 (verified on 4-GPU L2 with c=8/16/24/32/48/64,
+#                  64 prompts each → 0 failed across 448 requests).
+#
+# Differences vs PR CI overlay:
+#   - Use real weights (CI overlay uses ``load_format: dummy`` for IO smoke).
+#   - Explicitly set ``enable_prefix_caching: false`` on stage 0
+#     (the PR's ce675772 hotfix lives in the upstream multi_replicas.yaml; we
+#     replicate it here so this file is self-contained even when base_config
+#     defaults change).
+#   - Drop ``mm_processor_cache_gb: 0`` (CI-only, not desired in real runs).
+#
+# Topology (4 GPU):
+#   GPU 0          : thinker (stage 0)            — single instance
+#   GPU 1, 2, 3    : talker (stage 1) × 3 replicas + c2w (stage 2) × 3 replicas
+#                    (talker_rep_i and c2w_rep_i co-locate on GPU i+1, i ∈ {0,1,2})
+
+async_chunk: true
+
+connectors:
+  connector_of_shared_memory:
+    name: SharedMemoryConnector
+    extra:
+      codec_chunk_frames: 25
+      codec_left_context_frames: 25
+
+stages:
+  - stage_id: 0
+    devices: "0"
+    gpu_memory_utilization: 0.85
+    max_num_seqs: 6
+    max_model_len: 32768
+    enable_prefix_caching: false
+    default_sampling_params:
+      temperature: 0.4
+      top_p: 0.9
+      top_k: 1
+      max_tokens: 2048
+      seed: 42
+      repetition_penalty: 1.05
+
+  - stage_id: 1
+    devices: "1,2,3"
+    num_replicas: 3
+    gpu_memory_utilization: 0.6
+    max_num_seqs: 2
+    max_model_len: 32768
+    input_connectors:
+      from_stage_0: connector_of_shared_memory
+    default_sampling_params:
+      temperature: 0.9
+      top_k: 50
+      max_tokens: 4096
+      seed: 42
+      repetition_penalty: 1.05
+
+  - stage_id: 2
+    devices: "1,2,3"
+    num_replicas: 3
+    gpu_memory_utilization: 0.1
+    max_num_seqs: 2
+    max_num_batched_tokens: 65536
+    enforce_eager: true
+    async_scheduling: false
+    input_connectors:
+      from_stage_1: connector_of_shared_memory
+    default_sampling_params:
+      temperature: 0.0
+      top_p: 1.0
+      top_k: -1
+      max_tokens: 65536
+      seed: 42
+      repetition_penalty: 1.1
+
+platforms:
+  npu:
+    stages:
+      - stage_id: 0
+        gpu_memory_utilization: 0.6
+        tensor_parallel_size: 2
+        devices: "0,1"
+      - stage_id: 1
+        gpu_memory_utilization: 0.6
+        enforce_eager: true
+        devices: "2"
+      - stage_id: 2
+        gpu_memory_utilization: 0.3
+        devices: "2"
+
+  rocm:
+    stages:
+      - stage_id: 0
+        enforce_eager: true
+
+  xpu:
+    stages:
+      - stage_id: 0
+        tensor_parallel_size: 4
+        enforce_eager: true
+        max_cudagraph_capture_size: 0
+        devices: "0,1,2,3"
+      - stage_id: 1
+        enforce_eager: true
+        max_cudagraph_capture_size: 0
+        devices: "4"
+      - stage_id: 2
+        gpu_memory_utilization: 0.3
+        max_cudagraph_capture_size: 0
+        devices: "4"

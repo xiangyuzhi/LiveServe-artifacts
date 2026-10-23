@@ -1,0 +1,62 @@
+# Ming-flash-omni-2.0 4GPU TP2 + talker-DP2 async deploy for H200.
+#
+# Launch with CUDA_VISIBLE_DEVICES=4,5,6,7.
+# Topology:
+#   logical GPU 0-1: thinker TP=2 (physical GPU4-5)
+#   logical GPU 2:   talker replica 0 (physical GPU6)
+#   logical GPU 3:   talker replica 1 (physical GPU7)
+#
+# This is the optimized topology used by ming_async_scheduler, ming_liveserve_g1,
+# and ming_liveserve_ttfp_best.  Full-stack variants add scheduler, native prefetch
+# and G1 eviction through environment variables in run_ming_cbound_smoke.sh.
+pipeline: ming_flash_omni
+async_chunk: true
+
+trust_remote_code: true
+distributed_executor_backend: mp
+enable_prefix_caching: false
+
+connectors:
+  connector_of_shared_memory:
+    name: SharedMemoryConnector
+    extra:
+      shm_threshold_bytes: 65536
+      connector_get_sleep_s: 0.01
+      connector_get_max_wait_first_chunk: 3000
+      connector_get_max_wait: 300
+
+stages:
+  - stage_id: 0
+    max_num_seqs: 1
+    gpu_memory_utilization: 0.78
+    enforce_eager: false
+    tensor_parallel_size: 2
+    max_num_batched_tokens: 32768
+    devices: "0,1"
+    output_connectors:
+      to_stage_1: connector_of_shared_memory
+    compilation_config:
+      pass_config:
+        fuse_allreduce_rms: false
+    default_sampling_params:
+      temperature: 0.4
+      top_p: 0.9
+      max_tokens: 2048
+      repetition_penalty: 1.05
+      detokenize: true
+      ignore_eos: false
+
+  - stage_id: 1
+    max_num_seqs: 1
+    gpu_memory_utilization: 0.18
+    enforce_eager: true
+    max_num_batched_tokens: 1000000
+    devices: "2,3"
+    num_replicas: 2
+    input_connectors:
+      from_stage_0: connector_of_shared_memory
+    default_sampling_params:
+      temperature: 0.0
+      max_tokens: 1
+
+platforms: {}

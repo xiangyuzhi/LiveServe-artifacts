@@ -1,0 +1,48 @@
+# Ming-flash-omni-2.0 4GPU TP2 + talker-DP2 deploy for H200.
+#
+# Launch with CUDA_VISIBLE_DEVICES=4,5,6,7.
+# Topology:
+#   logical GPU 0-1: thinker TP=2 (physical GPU4-5)
+#   logical GPU 2:   talker replica 0 (physical GPU6)
+#   logical GPU 3:   talker replica 1 (physical GPU7)
+#
+# This is the no-optimization baseline topology for Ming tuning.  It keeps
+# async_chunk off and does not configure a SharedMemoryConnector.
+pipeline: ming_flash_omni
+async_chunk: false
+
+trust_remote_code: true
+distributed_executor_backend: mp
+enable_prefix_caching: false
+
+stages:
+  - stage_id: 0
+    max_num_seqs: 1
+    gpu_memory_utilization: 0.78
+    enforce_eager: false
+    tensor_parallel_size: 2
+    max_num_batched_tokens: 32768
+    devices: "0,1"
+    compilation_config:
+      pass_config:
+        fuse_allreduce_rms: false
+    default_sampling_params:
+      temperature: 0.4
+      top_p: 0.9
+      max_tokens: 2048
+      repetition_penalty: 1.05
+      detokenize: true
+      ignore_eos: false
+
+  - stage_id: 1
+    max_num_seqs: 1
+    gpu_memory_utilization: 0.18
+    enforce_eager: true
+    max_num_batched_tokens: 1000000
+    devices: "2,3"
+    num_replicas: 2
+    default_sampling_params:
+      temperature: 0.0
+      max_tokens: 1
+
+platforms: {}

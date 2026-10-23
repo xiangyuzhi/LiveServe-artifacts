@@ -1,0 +1,31 @@
+[
+  {
+    "video_path": "figs/example.mp4",
+    "questions": [
+      {
+        "task_type": "Smoke Object Recognition",
+        "question": "What kind of content is shown in the video right now?",
+        "time_stamp": "00:00:04",
+        "answer": "A",
+        "options": [
+          "A. A benchmark or paper-style video demonstration.",
+          "B. A cooking tutorial in a kitchen.",
+          "C. A football match on a grass field.",
+          "D. A close-up of a handwritten letter."
+        ]
+      },
+      {
+        "task_type": "Smoke Context Understanding",
+        "question": "Which visual element repeatedly appears in this example clip?",
+        "time_stamp": "00:00:08",
+        "answer": "C",
+        "options": [
+          "A. A single full-screen portrait.",
+          "B. A blank black screen with subtitles.",
+          "C. Rows of small video frames with annotation text.",
+          "D. A satellite map of a city."
+        ]
+      }
+    ]
+  }
+]

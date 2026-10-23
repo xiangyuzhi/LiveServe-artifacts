@@ -1,0 +1,23 @@
+# Qwen3-Omni-MoE deploy for StreamingBench video-to-text on 3 GPUs.
+#
+# Each GPU hosts one thinker/text replica. Use the full multi-stage deploys
+# when audio output is explicitly requested.
+async_chunk: true
+
+modes:
+  - mode: text-to-image
+    stages: [0]
+
+stages:
+  - stage_id: 0
+    gpu_memory_utilization: 0.60
+    devices: "0,1,2"
+    num_replicas: 3
+    enable_prefix_caching: false
+    default_sampling_params:
+      temperature: 0.4
+      top_p: 0.9
+      top_k: 1
+      max_tokens: 2048
+      seed: 42
+      repetition_penalty: 1.05

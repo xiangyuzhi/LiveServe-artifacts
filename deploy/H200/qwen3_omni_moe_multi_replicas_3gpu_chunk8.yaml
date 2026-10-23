@@ -1,0 +1,61 @@
+# Qwen3-Omni-MoE deploy for the 3-GPU scale lane with smaller audio chunks.
+#
+# Topology matches qwen3_omni_moe_multi_replicas_3gpu.yaml:
+#   GPU 0: thinker
+#   GPU 1: talker x1 + code2wav x1
+#   GPU 2: talker x1 + code2wav x1
+#
+# codec_chunk_frames=8 makes audio deltas shorter and more frequent so
+# audio-anchored barge-in tests can actually interrupt during playback.
+async_chunk: true
+
+connectors:
+  connector_of_shared_memory:
+    name: SharedMemoryConnector
+    extra:
+      codec_chunk_frames: 8
+      codec_left_context_frames: 25
+
+stages:
+  - stage_id: 0
+    gpu_memory_utilization: 0.9
+    devices: "0"
+    enable_prefix_caching: false
+    default_sampling_params:
+      temperature: 0.4
+      top_p: 0.9
+      top_k: 1
+      max_tokens: 2048
+      seed: 42
+      repetition_penalty: 1.05
+
+  - stage_id: 1
+    gpu_memory_utilization: 0.6
+    devices: "1,2"
+    num_replicas: 2
+    input_connectors:
+      from_stage_0: connector_of_shared_memory
+    default_sampling_params:
+      temperature: 0.9
+      top_k: 50
+      max_tokens: 4096
+      seed: 42
+      repetition_penalty: 1.05
+
+  - stage_id: 2
+    gpu_memory_utilization: 0.1
+    max_num_seqs: 1
+    enforce_eager: true
+    async_scheduling: false
+    max_num_batched_tokens: 51200
+    devices: "1,2"
+    num_replicas: 2
+    input_connectors:
+      from_stage_1: connector_of_shared_memory
+    default_sampling_params:
+      temperature: 0.0
+      top_p: 1.0
+      top_k: -1
+      max_tokens: 65536
+      seed: 42
+      repetition_penalty: 1.1
